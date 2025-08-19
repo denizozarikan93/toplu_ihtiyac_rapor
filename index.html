@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Toplu İhtiyaç Listesi</title>
+    <title>Excel Dosyaları Toplam Raporu</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body {
@@ -200,7 +200,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>📊 Toplu İhtiyaç Listesi Oluşturucu</h1>
+        <h1>📊 Excel Dosyaları Toplam Raporu Oluşturucu</h1>
         
         <div class="upload-section">
             <h3>📁 Excel Dosyalarınızı Seçin</h3>
@@ -296,6 +296,7 @@
             processBtn.textContent = 'İşleniyor...';
             
             processedData = [];
+            allRawData = []; // Ham veri listesini temizle
             const supplierTotals = {};
             
             showStatus('Dosyalar okunuyor...', 'info');
@@ -308,6 +309,14 @@
                     
                     const data = await readExcelFile(file);
                     if (data && data.length > 0) {
+                        // Ham veriyi kaydet (dosya adı ile birlikte)
+                        data.forEach(row => {
+                            allRawData.push({
+                                'Dosya Adı': file.name,
+                                ...row
+                            });
+                        });
+                        
                         data.forEach(row => {
                             const supplierCode = String(row['Tedarikçi Kodu'] || '').trim();
                             const supplier = String(row['Tedarikçi'] || '').trim();
@@ -489,6 +498,54 @@
                 
                 // Worksheet'i workbook'a ekle
                 XLSX.utils.book_append_sheet(wb, ws, 'Detaylı Tedarikçi Raporu');
+                
+                // İkinci sayfa: Tüm Ham Veriler
+                const rawDataSheetData = [
+                    ['Tüm Dosyalardan Ham Veriler'],
+                    ['Oluşturulma Tarihi: ' + new Date().toLocaleDateString('tr-TR')],
+                    [''],
+                    ['Dosya Adı', 'No', 'Intema Kodu', 'Tedarikçi Kodu', 'Tiger Kod', 'Tedarikçi', 
+                     'Açıklama', 'Miktar', 'Birim', 'Montaj Pakeri', 'Malzeme Renk', 'Malzeme Termin']
+                ];
+                
+                allRawData.forEach(item => {
+                    rawDataSheetData.push([
+                        item['Dosya Adı'],
+                        item['No'],
+                        item['Intema Kodu'],
+                        item['Tedarikçi Kodu'],
+                        item['Tiger Kod'],
+                        item['Tedarikçi'],
+                        item['Açıklama'],
+                        item['Miktar'],
+                        item['Birim'],
+                        item['Montaj Pakeri'],
+                        item['Malzeme Renk'],
+                        item['Malzeme Termin']
+                    ]);
+                });
+                
+                // Ham veri worksheet'i oluştur
+                const wsRaw = XLSX.utils.aoa_to_sheet(rawDataSheetData);
+                
+                // Ham veri sütun genişliklerini ayarla
+                wsRaw['!cols'] = [
+                    {wch: 25}, // Dosya Adı
+                    {wch: 8},  // No
+                    {wch: 15}, // Intema Kodu
+                    {wch: 15}, // Tedarikçi Kodu
+                    {wch: 15}, // Tiger Kod
+                    {wch: 25}, // Tedarikçi
+                    {wch: 40}, // Açıklama
+                    {wch: 12}, // Miktar
+                    {wch: 10}, // Birim
+                    {wch: 15}, // Montaj Pakeri
+                    {wch: 25}, // Malzeme Renk
+                    {wch: 15}  // Malzeme Termin
+                ];
+                
+                // Ham veri worksheet'i workbook'a ekle
+                XLSX.utils.book_append_sheet(wb, wsRaw, 'Tüm Ham Veriler');
                 
                 // Dosyayı indir
                 const fileName = `Detayli_Tedarikci_Raporu_${new Date().toISOString().slice(0,10)}.xlsx`;
