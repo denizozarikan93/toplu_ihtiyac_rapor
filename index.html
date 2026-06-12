@@ -227,16 +227,15 @@
         </button>
         
         <div class="results" id="results">
-            <h3>📈 İşleme Sonuçları</h3>
-            <div id="summaryInfo"></div>
             <table class="summary-table" id="summaryTable">
                 <thead>
                     <tr>
                         <th>Tedarikçi Kodu</th>
                         <th>Tedarikçi Adı</th>
+                        <th>Açıklama</th>
+                        <th>Malzeme Renk</th>
                         <th>Toplam Miktar</th>
                         <th>Birim</th>
-                        <th>Kayıt Sayısı</th>
                     </tr>
                 </thead>
                 <tbody id="summaryBody">
@@ -297,6 +296,7 @@
             processBtn.textContent = 'İşleniyor...';
             
             processedData = [];
+            allRawData = []; // Ham veri listesini temizle
             const supplierTotals = {};
             
             showStatus('Dosyalar okunuyor...', 'info');
@@ -309,36 +309,52 @@
                     
                     const data = await readExcelFile(file);
                     if (data && data.length > 0) {
+                        // Ham veriyi kaydet (dosya adı ile birlikte)
                         data.forEach(row => {
-                            const supplierCode = row['Tedarikçi Kodu'];
-                            const supplier = row['Tedarikçi'];
+                            allRawData.push({
+                                'Dosya Adı': file.name,
+                                ...row
+                            });
+                        });
+                        
+                        data.forEach(row => {
+                            const supplierCode = String(row['Tedarikçi Kodu'] || '').trim();
+                            const supplier = String(row['Tedarikçi'] || '').trim();
                             const quantity = parseFloat(row['Miktar']) || 0;
-                            const unit = row['Birim'];
+                            const unit = String(row['Birim'] || '').trim();
                             
                             if (supplierCode && quantity > 0) {
-                                const key = supplierCode;
+                                const description = String(row['Açıklama'] || '').trim();
+                                const materialColor = String(row['Malzeme Renk'] || '').trim(); // Tek kolon
+                                
+                                // Tedarikçi Kodu + Malzeme Renk kombinasyonu için benzersiz anahtar
+                                const key = `${supplierCode}|${materialColor}`;
                                 
                                 if (!supplierTotals[key]) {
                                     supplierTotals[key] = {
                                         supplierCode: supplierCode,
-                                        supplier: supplier || '',
+                                        supplier: supplier,
+                                        description: description,
+                                        materialColor: materialColor,
                                         totalQuantity: 0,
-                                        unit: unit || '',
-                                        recordCount: 0
+                                        unit: unit
                                     };
                                 }
                                 
                                 supplierTotals[key].totalQuantity += quantity;
-                                supplierTotals[key].recordCount += 1;
                                 
-                                // Birim bilgisini güncelle (en son bulunanı kullan)
+                                // Diğer bilgileri güncelle (en son bulunanı kullan)
                                 if (unit && unit.trim() !== '') {
                                     supplierTotals[key].unit = unit;
                                 }
-                                
-                                // Tedarikçi adını güncelle (en son bulunanı kullan)
                                 if (supplier && supplier.trim() !== '') {
                                     supplierTotals[key].supplier = supplier;
+                                }
+                                if (description && description.trim() !== '') {
+                                    supplierTotals[key].description = description;
+                                }
+                                if (materialColor && materialColor.trim() !== '') {
+                                    supplierTotals[key].materialColor = materialColor;
                                 }
                             }
                         });
@@ -347,13 +363,20 @@
                     updateProgress(((i + 1) / selectedFiles.length) * 100);
                 }
                 
-                // Sonuçları diziye çevir
-                summaryData = Object.values(supplierTotals).sort((a, b) => 
-                    b.totalQuantity - a.totalQuantity
-                );
+                // Sonuçları diziye çevir ve sırala (önce tedarikçi koduna, sonra malzeme-renk'e göre)
+                summaryData = Object.values(supplierTotals).sort((a, b) => {
+                    const codeA = String(a.supplierCode || '');
+                    const codeB = String(b.supplierCode || '');
+                    if (codeA !== codeB) {
+                        return codeA.localeCompare(codeB);
+                    }
+                    const materialColorA = String(a.materialColor || '');
+                    const materialColorB = String(b.materialColor || '');
+                    return materialColorA.localeCompare(materialColorB);
+                });
                 
                 displayResults();
-                showStatus(`✅ İşlem tamamlandı! ${summaryData.length} farklı tedarikçi kodu bulundu.`, 'success');
+                showStatus(`✅ İşlem tamamlandı! ${summaryData.length} farklı tedarikçi-malzeme/renk kombinasyonu bulundu.`, 'success');
                 
                 document.getElementById('downloadBtn').style.display = 'block';
                 
@@ -396,10 +419,10 @@
                         }
                         adjustedWorksheet['!ref'] = newRef;
                         
-                        // JSON'a çevir
+                        // JSON'a çevir - "Malzeme Renk" tek kolon (10. kolon)
                         const jsonData = XLSX.utils.sheet_to_json(adjustedWorksheet, {
                             header: ['No', 'Intema Kodu', 'Tedarikçi Kodu', 'Tiger Kod', 'Tedarikçi', 
-                                   'Açıklama', 'Miktar', 'Birim', 'Montaj Pakeri', 'Malzeme', 'Renk', 'Malzeme Termin'],
+                                   'Açıklama', 'Miktar', 'Birim', 'Montaj Pakeri', 'Malzeme Renk', 'Malzeme Termin'],
                             range: 1 // İlk satırı başlık olarak kullan
                         });
                         
@@ -416,20 +439,6 @@
         function displayResults() {
             const results = document.getElementById('results');
             const summaryBody = document.getElementById('summaryBody');
-            const summaryInfo = document.getElementById('summaryInfo');
-            
-            // Özet bilgiler
-            const totalQuantity = summaryData.reduce((sum, item) => sum + item.totalQuantity, 0);
-            const totalRecords = summaryData.reduce((sum, item) => sum + item.recordCount, 0);
-            
-            summaryInfo.innerHTML = `
-                <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <strong>📊 Genel Özet:</strong><br>
-                    • Toplam Tedarikçi Sayısı: ${summaryData.length}<br>
-                    • Toplam Kayıt Sayısı: ${totalRecords}<br>
-                    • Toplam Miktar: ${totalQuantity.toLocaleString('tr-TR', {maximumFractionDigits: 2})}
-                </div>
-            `;
             
             // Tablo verilerini doldur
             summaryBody.innerHTML = '';
@@ -438,11 +447,12 @@
                 row.innerHTML = `
                     <td>${item.supplierCode}</td>
                     <td>${item.supplier}</td>
+                    <td>${item.description}</td>
+                    <td>${item.materialColor}</td>
                     <td style="text-align: right; font-weight: bold;">
                         ${item.totalQuantity.toLocaleString('tr-TR', {maximumFractionDigits: 2})}
                     </td>
                     <td>${item.unit}</td>
-                    <td style="text-align: center;">${item.recordCount}</td>
                 `;
             });
             
@@ -456,19 +466,20 @@
                 
                 // Özet sayfası için veri hazırla
                 const summarySheetData = [
-                    ['Tedarikçi Toplam Raporu'],
+                    ['Tedarikçi Toplam Raporu (Malzeme Renk Detaylı)'],
                     ['Oluşturulma Tarihi: ' + new Date().toLocaleDateString('tr-TR')],
                     [''],
-                    ['Tedarikçi Kodu', 'Tedarikçi Adı', 'Toplam Miktar', 'Birim', 'Kayıt Sayısı']
+                    ['Tedarikçi Kodu', 'Tedarikçi Adı', 'Açıklama', 'Malzeme Renk', 'Toplam Miktar', 'Birim']
                 ];
                 
                 summaryData.forEach(item => {
                     summarySheetData.push([
                         item.supplierCode,
                         item.supplier,
+                        item.description,
+                        item.materialColor,
                         item.totalQuantity,
-                        item.unit,
-                        item.recordCount
+                        item.unit
                     ]);
                 });
                 
@@ -478,17 +489,66 @@
                 // Sütun genişliklerini ayarla
                 ws['!cols'] = [
                     {wch: 15}, // Tedarikçi Kodu
-                    {wch: 30}, // Tedarikçi Adı
+                    {wch: 25}, // Tedarikçi Adı
+                    {wch: 40}, // Açıklama
+                    {wch: 25}, // Malzeme Renk
                     {wch: 15}, // Toplam Miktar
-                    {wch: 10}, // Birim
-                    {wch: 12}  // Kayıt Sayısı
+                    {wch: 10}  // Birim
                 ];
                 
                 // Worksheet'i workbook'a ekle
-                XLSX.utils.book_append_sheet(wb, ws, 'Tedarikçi Toplamları');
+                XLSX.utils.book_append_sheet(wb, ws, 'Detaylı Tedarikçi Raporu');
+                
+                // İkinci sayfa: Tüm Ham Veriler
+                const rawDataSheetData = [
+                    ['Tüm Dosyalardan Ham Veriler'],
+                    ['Oluşturulma Tarihi: ' + new Date().toLocaleDateString('tr-TR')],
+                    [''],
+                    ['Dosya Adı', 'No', 'Intema Kodu', 'Tedarikçi Kodu', 'Tiger Kod', 'Tedarikçi', 
+                     'Açıklama', 'Miktar', 'Birim', 'Montaj Pakeri', 'Malzeme Renk', 'Malzeme Termin']
+                ];
+                
+                allRawData.forEach(item => {
+                    rawDataSheetData.push([
+                        item['Dosya Adı'],
+                        item['No'],
+                        item['Intema Kodu'],
+                        item['Tedarikçi Kodu'],
+                        item['Tiger Kod'],
+                        item['Tedarikçi'],
+                        item['Açıklama'],
+                        item['Miktar'],
+                        item['Birim'],
+                        item['Montaj Pakeri'],
+                        item['Malzeme Renk'],
+                        item['Malzeme Termin']
+                    ]);
+                });
+                
+                // Ham veri worksheet'i oluştur
+                const wsRaw = XLSX.utils.aoa_to_sheet(rawDataSheetData);
+                
+                // Ham veri sütun genişliklerini ayarla
+                wsRaw['!cols'] = [
+                    {wch: 25}, // Dosya Adı
+                    {wch: 8},  // No
+                    {wch: 15}, // Intema Kodu
+                    {wch: 15}, // Tedarikçi Kodu
+                    {wch: 15}, // Tiger Kod
+                    {wch: 25}, // Tedarikçi
+                    {wch: 40}, // Açıklama
+                    {wch: 12}, // Miktar
+                    {wch: 10}, // Birim
+                    {wch: 15}, // Montaj Pakeri
+                    {wch: 25}, // Malzeme Renk
+                    {wch: 15}  // Malzeme Termin
+                ];
+                
+                // Ham veri worksheet'i workbook'a ekle
+                XLSX.utils.book_append_sheet(wb, wsRaw, 'Tüm Ham Veriler');
                 
                 // Dosyayı indir
-                const fileName = `Tedarikci_Toplam_Raporu_${new Date().toISOString().slice(0,10)}.xlsx`;
+                const fileName = `Detayli_Tedarikci_Raporu_${new Date().toISOString().slice(0,10)}.xlsx`;
                 XLSX.writeFile(wb, fileName);
                 
                 showStatus('✅ Rapor başarıyla indirildi!', 'success');
